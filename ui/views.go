@@ -2,12 +2,13 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
 const ascii = `
-	 ________  ___  ___  ________  _________  ___       ___     
+     ________  ___  ___  ________  _________  ___       ___     
     |\   ____\|\  \|\  \|\   __  \|\___   ___\\  \     |\  \    
     \ \  \___|\ \  \\\  \ \  \|\  \|___ \  \_\ \  \    \ \  \   
      \ \  \    \ \   __  \ \   __  \   \ \  \ \ \  \    \ \  \  
@@ -17,57 +18,68 @@ const ascii = `
 `
 
 func RenderLogin(m *Model) string {
-	s := ascii + "\n"
-	s += InputStyle.Render(m.TextArea.View())
-	s += ErrorStyle.Render(m.ErrorMsg)
+	centeredAscii := lipgloss.PlaceHorizontal(m.WindowWidth, lipgloss.Center, SystemStyle.Render(ascii))
+	s := centeredAscii + "\n\n"
+	s += SystemStyle.Render("user@terminal:~$ login") + "\n"
+	s += SystemStyle.Render("Username: ") + InputStyle.Render(m.TextArea.View())
+	if m.ErrorMsg != "" {
+		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
+	}
 	return s
 }
 
 func RenderRoomsList(m *Model) string {
-	s := "Salas disponívies:\n\n"
+	s := fmt.Sprintf("%s@terminal:~$ /chatli/rooms ls", m.Session.Username)
+	s = SystemStyle.Render(s) + "\n"
 	for i, v := range m.Session.JoinedRooms {
 		if i == m.Cursor {
-			line := "> " + v
-			s += SelectedItemStyle.Render(line) + "\n\n"
+			s += SelectedItemStyle.Render("> "+v) + "\n"
 		} else {
-			line := "  " + v
-			s += UnselectedItemStyle.Render(line) + "\n\n"
+			s += UnselectedItemStyle.Render("  "+v) + "\n"
 		}
 	}
-	s += HelpStyle.Render("Nova Sala [n] • Entrar em Sala [e] • Sair [esc]")
-	s += ErrorStyle.Render(m.ErrorMsg)
+	s += "\n" + HelpStyle.Render("[n] new | [e] join | [enter] select | [esc] logout")
+	if m.ErrorMsg != "" {
+		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
+	}
 	return s
 }
 
 func RenderJoinRoom(m *Model) string {
-	s := "Digite o código da sala\n"
-	s += InputStyle.Render(m.TextArea.View())
-	s += ErrorStyle.Render(m.ErrorMsg)
+	s := fmt.Sprintf("%s@terminal:~$ join-room --id", m.Session.Username)
+	s = SystemStyle.Render(s) + "\n"
+	s += SystemStyle.Render("Room ID: ") + InputStyle.Render(m.TextArea.View())
+	if m.ErrorMsg != "" {
+		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
+	}
 	return s
 }
 
 func RenderChatView(m *Model) string {
-	m.TextArea.Placeholder = "Digite sua mensagem..."
-	s := ""
+	m.TextArea.Placeholder = ""
+	var b strings.Builder
+	renderWidth := m.WindowWidth - 2
+
 	for _, val := range m.ChatsHistory[m.CurrentRoom] {
-		if val.Content != "" {
-			displayTime := val.Timestamp
-			if len(displayTime) >= 16 {
-				displayTime = displayTime[11:16]
-			}
-			styledTime := TimeStyle.Render(displayTime)
-			userColor := lipgloss.Color(HashColor(val.User, ColorMap))
-			styledUser := SenderStyle.Foreground(userColor).Render(val.User)
-			if m.Session.Username == val.User {
-				line := fmt.Sprintf("%s [%s]\n %s", styledUser, styledTime, val.Content)
-				s += lipgloss.NewStyle().Width(76).PaddingRight(3).Align(lipgloss.Right).Render(line) + "\n"
-			} else {
-				line := fmt.Sprintf("[%s] %s\n %s", styledTime, styledUser, val.Content)
-				s += lipgloss.NewStyle().Width(76).PaddingRight(3).Align(lipgloss.Left).Render(line) + "\n"
-			}
+		if val.Content == "" {
+			continue
+		}
+
+		displayTime := val.Timestamp
+		if len(displayTime) >= 16 {
+			displayTime = displayTime[11:16]
+		}
+
+		//userColor := lipgloss.Color(HashColor(val.User, ColorMap))
+		styledUser := SenderStyle.Render(val.User)
+
+		if m.Session.Username == val.User {
+			line := fmt.Sprintf("%s <%s> [%s]", val.Content, styledUser, TimeStyle.Render(displayTime))
+			b.WriteString(lipgloss.NewStyle().Width(renderWidth).Align(lipgloss.Right).Render(line) + "\n")
+		} else {
+			line := fmt.Sprintf("[%s] <%s> %s", TimeStyle.Render(displayTime), styledUser, val.Content)
+			b.WriteString(lipgloss.NewStyle().Width(renderWidth).Align(lipgloss.Left).Render(line) + "\n")
 		}
 	}
-	//s += ErrorStyle.Render(m.ErrorMsg)
-	//s += "\n" + InputStyle.Render(m.TextArea.View())
-	return s
+	return b.String()
 }

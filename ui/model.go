@@ -3,6 +3,7 @@ package ui
 import (
 	"chatli/api"
 	"chatli/data"
+	"fmt"
 	"time"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -46,21 +47,17 @@ type Model struct {
 
 func NewModel() *Model {
 	ta := textarea.New()
-	ta.Placeholder = "Digite um nome..."
+	ta.Placeholder = ""
 	ta.Focus()
 	ta.Prompt = ""
 	ta.ShowLineNumbers = false
-
-	ta.SetWidth(69)
 	ta.SetHeight(1)
-	ta.CharLimit = 69
-
-	vp := viewport.New(70, 20)
-	vp.SetContent("Carregando mensagens...")
 
 	ta.FocusedStyle.Base = lipgloss.NewStyle()
 	ta.BlurredStyle.Base = lipgloss.NewStyle()
 	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+
+	vp := viewport.New(80, 20)
 
 	return &Model{
 		State:        loginView,
@@ -86,16 +83,19 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "ctrl+c":
 			return m, tea.Quit
 		case "enter":
+			m.ErrorMsg = ""
 			switch m.State {
 			case loginView:
 				name := m.TextArea.Value()
+				if name == "" {
+					return m, nil
+				}
 				session, err := api.CreateSession(name)
 				if err != nil {
 					m.ErrorMsg = err.Error()
 					return m, nil
 				}
 				m.Session = *session
-				m.ErrorMsg = ""
 				m.State = roomListView
 				m.TextArea.Reset()
 				return m, nil
@@ -104,23 +104,15 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if len(m.Session.JoinedRooms) == 0 {
 					return m, nil
 				}
-
 				m.CurrentRoom = m.Session.JoinedRooms[m.Cursor]
 				m.State = chatView
 				m.TextArea.Reset()
-				err := api.JoinRoom(m.Session, m.CurrentRoom)
-				if err != nil {
-					m.ErrorMsg = "Erro ao entrar na sala: " + err.Error()
-					return m, nil
-				}
-				v, err := api.LoadChatMessages(m.Session, m.CurrentRoom, 50)
-				if err != nil {
-					m.ErrorMsg = err.Error()
-				} else {
-					m.ChatsHistory[m.CurrentRoom] = v
-					m.Viewport.SetContent(RenderChatView(m))
-					m.Viewport.GotoBottom()
-				}
+				api.JoinRoom(m.Session, m.CurrentRoom)
+				v, _ := api.LoadChatMessages(m.Session, m.CurrentRoom, 50)
+				m.ChatsHistory[m.CurrentRoom] = v
+				m.Viewport.SetContent(RenderChatView(m))
+				m.Viewport.GotoBottom()
+
 				conn, ok := m.SocketsConns[m.CurrentRoom]
 				if !ok || conn == nil {
 					wsConn, err := api.ConnectWebSocket(m.Session, m.CurrentRoom)
@@ -140,23 +132,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.ErrorMsg = err.Error()
 					return m, nil
 				}
-				wsConn, err := api.ConnectWebSocket(m.Session, roomId)
-				if err != nil {
-					m.ErrorMsg = err.Error()
-					return m, nil
-				}
+				wsConn, _ := api.ConnectWebSocket(m.Session, roomId)
 				m.SocketsConns[roomId] = wsConn
-
-				v, err := api.LoadChatMessages(m.Session, roomId, 50)
-				if err != nil {
-					m.ErrorMsg = err.Error()
-				} else {
-					m.ChatsHistory[roomId] = v
-					m.Viewport.SetContent(RenderChatView(m))
-					m.Viewport.GotoBottom()
-				}
-
-				m.ErrorMsg = ""
 				m.Session.JoinedRooms = append(m.Session.JoinedRooms, roomId)
 				m.State = chatView
 				m.CurrentRoom = roomId
@@ -168,42 +145,28 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				if content == "" {
 					return m, nil
 				}
-
 				conn := m.SocketsConns[m.CurrentRoom]
 				msg := data.Message{
-					Type:      "chat",
-					User:      m.Session.Username,
+					Type: "chat", User: m.Session.Username,
 					Timestamp: time.Now().Format("2006-01-02 15:04:05"),
-					Content:   content,
-					RoomId:    m.CurrentRoom,
+					Content:   content, RoomId: m.CurrentRoom,
 				}
-
-				err := conn.WriteJSON(msg)
-				if err != nil {
-					m.ErrorMsg = err.Error()
-					return m, nil
-				}
+				conn.WriteJSON(msg)
 				m.TextArea.Reset()
 				return m, nil
 			}
 		case "n":
 			if m.State == roomListView {
-				newRoom, err := api.CreateRoom(m.Session)
-				if err != nil {
-					m.ErrorMsg = err.Error()
-					return m, nil
-				}
-
-				// Apenas adiciona à lista e limpa mensagens de erro
+				newRoom, _ := api.CreateRoom(m.Session)
 				m.Session.JoinedRooms = append(m.Session.JoinedRooms, newRoom.Id)
-				m.ErrorMsg = ""
 				return m, nil
 			}
 		case "e":
 			if m.State == roomListView {
 				m.State = joinRoomView
 				m.TextArea.Reset()
-				return m, cmd
+				m.ErrorMsg = ""
+				return m, nil
 			}
 		case "up":
 			if m.Cursor > 0 && m.State == roomListView {
@@ -216,58 +179,37 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.ErrorMsg = ""
 			switch m.State {
-			case loginView:
-				m.State = loginView
 			case roomListView:
 				m.State = loginView
-			case joinRoomView:
-				m.State = roomListView
-			case chatView:
+			case joinRoomView, chatView:
 				m.State = roomListView
 			}
+			m.TextArea.Reset()
 		}
 	case tea.WindowSizeMsg:
 		m.WindowHeight = msg.Height
 		m.WindowWidth = msg.Width
-		m.TextArea.SetWidth(70)
-		m.Viewport.Height = msg.Height - 14
+		m.TextArea.SetWidth(msg.Width)
+		m.Viewport.Height = msg.Height - 4
 		m.Viewport.Width = msg.Width
 
 	case data.Message:
 		m.ChatsHistory[msg.RoomId] = append(m.ChatsHistory[msg.RoomId], msg)
-		s := RenderChatView(m)
-		m.Viewport.SetContent(s)
+		m.Viewport.SetContent(RenderChatView(m))
 		m.Viewport.GotoBottom()
-		cmd := WaitForMessage(m.SocketsConns[msg.RoomId], msg.RoomId)
+		return m, WaitForMessage(m.SocketsConns[msg.RoomId], msg.RoomId)
+	}
+
+	m.TextArea, cmd = m.TextArea.Update(msg)
+	if key, ok := msg.(tea.KeyMsg); ok && (key.String() == "k" || key.String() == "j") {
 		return m, cmd
-
-	case SocketError:
-		m.ErrorMsg = "Erro detetado: " + msg.Err.Error()
-		return m, tea.Tick(time.Second, func(t time.Time) tea.Msg {
-			return ReconnectMsg{RoomId: msg.RoomId}
-		})
-	case ReconnectMsg:
-		newConn, err := api.ConnectWebSocket(m.Session, msg.RoomId)
-		if err != nil {
-			m.ErrorMsg = "Erro na reconexão: " + err.Error()
-			return m, tea.Tick(time.Second, func(t time.Time) tea.Msg {
-				return ReconnectMsg{RoomId: msg.RoomId}
-			})
-		}
-		m.SocketsConns[msg.RoomId] = newConn
-		m.ErrorMsg = ""
-		return m, WaitForMessage(newConn, msg.RoomId)
 	}
-	if m.State != roomListView {
-		m.TextArea, cmd = m.TextArea.Update(msg)
-		m.Viewport, vpCmd = m.Viewport.Update(msg)
-	}
-
+	m.Viewport, vpCmd = m.Viewport.Update(msg)
 	return m, tea.Batch(cmd, vpCmd)
 }
 
 func (m *Model) View() string {
-	s := ""
+	var s string
 	switch m.State {
 	case loginView:
 		s = RenderLogin(m)
@@ -276,19 +218,15 @@ func (m *Model) View() string {
 	case joinRoomView:
 		s = RenderJoinRoom(m)
 	case chatView:
-		header := RoomTitleStyle.Render("Sala: " + m.CurrentRoom)
+		header := RoomTitleStyle.Render(fmt.Sprintf("%s@terminal:~$ /chatli/rooms/%s tail", m.Session.Username, m.CurrentRoom)) + "\n"
 		body := m.Viewport.View()
-		footer := InputStyle.Render(m.TextArea.View())
+		prompt := SystemStyle.Render("$ ") + InputStyle.Render(m.TextArea.View())
+		s = header + body + "\n" + prompt
 		if m.ErrorMsg != "" {
-			errMsg := ErrorStyle.Render(m.ErrorMsg)
-			s = lipgloss.JoinVertical(lipgloss.Left, header, body, errMsg, footer)
-		} else {
-			s = lipgloss.JoinVertical(lipgloss.Left, header, body, footer)
+			s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 		}
 	}
-	temp := AppStyle.Render(s)
-	r := lipgloss.Place(m.WindowWidth, m.WindowHeight, lipgloss.Center, lipgloss.Center, temp)
-	return r
+	return lipgloss.Place(m.WindowWidth, m.WindowHeight, lipgloss.Left, lipgloss.Top, AppStyle.Render(s))
 }
 
 func WaitForMessage(conn *websocket.Conn, roomId string) tea.Cmd {
