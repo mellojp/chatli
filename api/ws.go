@@ -1,7 +1,7 @@
 package api
 
 import (
-	"chatli/data"
+	"github.com/mellojp/chatli/data"
 
 	"github.com/gorilla/websocket"
 )

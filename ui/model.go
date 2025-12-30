@@ -1,8 +1,9 @@
 package ui
 
 import (
-	"chatli/api"
-	"chatli/data"
+	"github.com/mellojp/chatli/api"
+	"github.com/mellojp/chatli/data"
+
 	"fmt"
 	"time"
 

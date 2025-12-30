@@ -1,4 +1,4 @@
-module chatli
+module github.com/mellojp/chatli
 
 go 1.25.4
 

@@ -1,7 +1,8 @@
 package main
 
 import (
-	"chatli/ui"
+	"github.com/mellojp/chatli/ui"
+
 	"fmt"
 	"os"
 
