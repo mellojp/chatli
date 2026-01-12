@@ -8,22 +8,68 @@ import (
 )
 
 const ascii = `
-     ________  ___  ___  ________  _________  ___       ___     
-    |\   ____\|\  \|\  \|\   __  \|\___   ___\\  \     |\  \    
-    \ \  \___|\ \  \\\  \ \  \|\  \|___ \  \_\ \  \    \ \  \   
-     \ \  \    \ \   __  \ \   __  \   \ \  \ \ \  \    \ \  \  
-      \ \  \____\ \  \ \  \ \  \ \  \   \ \  \ \ \  \____\ \  \ 
-       \ \_______\ \__\ \__\ \__\ \__\   \ \__\ \ \_______\ \__\
-        \|_______|\|__|\|__|\|__|\|__|    \|__|  \|_______|\|__|
+ ________  ___  ___  ________  _________  ___       ___     
+|\   ____\|\  \|\  \|\   __  \|\___   ___\\  \     |\  \    
+\ \  \___|\ \  \\\  \ \  \|\  \|___ \  \_\ \  \    \ \  \   
+ \ \  \    \ \   __  \ \   __  \   \ \  \ \ \  \    \ \  \  
+  \ \  \____\ \  \ \  \ \  \ \  \   \ \  \ \ \  \____\ \  \ 
+   \ \_______\ \__\ \__\ \__\ \__\   \ \__\ \ \_______\ \__\
+    \|_______|\|__|\|__|\|__|\|__|    \|__|  \|_______|\|__|
 `
 
+func renderAsciiHeader(m *Model) string {
+	return lipgloss.PlaceHorizontal(m.WindowWidth, lipgloss.Center, SystemStyle.Render(ascii)) + "\n\n"
+}
+
 func RenderLogin(m *Model) string {
-	centeredAscii := lipgloss.PlaceHorizontal(m.WindowWidth, lipgloss.Center, SystemStyle.Render(ascii))
-	s := centeredAscii + "\n\n"
-	s += SystemStyle.Render("user@terminal:~$ login") + "\n"
-	s += SystemStyle.Render("Username: ") + InputStyle.Render(m.TextArea.View())
+	s := renderAsciiHeader(m)
+	s += SystemStyle.Render("user@terminal:~$ login") + "\n\n"
+
+	usernameField := m.UsernameInput.View()
+	passwordField := m.PasswordInput.View()
+
+	// Adiciona estilo de foco
+	if m.InputIndex == 0 {
+		usernameField = SelectedItemStyle.Render(usernameField)
+	} else {
+		passwordField = SelectedItemStyle.Render(passwordField)
+	}
+
+	s += "Username: " + usernameField + "\n"
+	s += "Password: " + passwordField + "\n\n"
+
+	s += HelpStyle.Render("[tab/arrows] switch fields | [enter] login | [esc] register new account")
+
+	if m.SuccessMsg != "" {
+		s += "\n\n" + SuccessStyle.Render(m.SuccessMsg)
+	}
 	if m.ErrorMsg != "" {
-		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
+		s += "\n\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
+	}
+	return s
+}
+
+func RenderRegister(m *Model) string {
+	s := renderAsciiHeader(m)
+	s += SystemStyle.Render("user@terminal:~$ register") + "\n\n"
+
+	usernameField := m.UsernameInput.View()
+	passwordField := m.PasswordInput.View()
+
+	// Adiciona estilo de foco
+	if m.InputIndex == 0 {
+		usernameField = SelectedItemStyle.Render(usernameField)
+	} else {
+		passwordField = SelectedItemStyle.Render(passwordField)
+	}
+
+	s += "Username: " + usernameField + "\n"
+	s += "Password: " + passwordField + "\n\n"
+
+	s += HelpStyle.Render("[tab/arrows] switch fields | [enter] create account | [esc] back to login")
+
+	if m.ErrorMsg != "" {
+		s += "\n\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 	}
 	return s
 }
@@ -31,14 +77,35 @@ func RenderLogin(m *Model) string {
 func RenderRoomsList(m *Model) string {
 	s := fmt.Sprintf("%s@terminal:~$ /chatli/rooms ls", m.Session.Username)
 	s = SystemStyle.Render(s) + "\n"
-	for i, v := range m.Session.JoinedRooms {
+
+	if len(m.Session.JoinedRooms) == 0 {
+		s += HelpStyle.Render("(Nenhuma sala recente)") + "\n"
+	}
+
+	for i, room := range m.Session.JoinedRooms {
+		// Formatação: "Nome da Sala" (ID)
+		line := fmt.Sprintf("%s %s", room.Name, RoomIdStyle.Render("("+room.Id+")"))
+
 		if i == m.Cursor {
-			s += SelectedItemStyle.Render("> "+v) + "\n"
+			s += SelectedItemStyle.Render("> "+line) + "\n"
 		} else {
-			s += UnselectedItemStyle.Render("  "+v) + "\n"
+			s += UnselectedItemStyle.Render("  "+line) + "\n"
 		}
 	}
-	s += "\n" + HelpStyle.Render("[n] new | [e] join | [enter] select | [esc] logout")
+	s += "\n" + HelpStyle.Render("[up/down] nav | [n] new room | [e] enter room | [enter] select | [esc] logout")
+	if m.ErrorMsg != "" {
+		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
+	}
+	return s
+}
+
+func RenderCreateRoom(m *Model) string {
+	s := fmt.Sprintf("%s@terminal:~$ create-room", m.Session.Username)
+	s = SystemStyle.Render(s) + "\n"
+	s += SystemStyle.Render("Room Name: ") + InputStyle.Render(m.GenericInput.View())
+
+	s += "\n\n" + HelpStyle.Render("[enter] create | [esc] cancel")
+
 	if m.ErrorMsg != "" {
 		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 	}
@@ -48,7 +115,10 @@ func RenderRoomsList(m *Model) string {
 func RenderJoinRoom(m *Model) string {
 	s := fmt.Sprintf("%s@terminal:~$ join-room --id", m.Session.Username)
 	s = SystemStyle.Render(s) + "\n"
-	s += SystemStyle.Render("Room ID: ") + InputStyle.Render(m.TextArea.View())
+	s += SystemStyle.Render("Room ID: ") + InputStyle.Render(m.GenericInput.View())
+
+	s += "\n\n" + HelpStyle.Render("[enter] join | [esc] cancel")
+
 	if m.ErrorMsg != "" {
 		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 	}
@@ -56,31 +126,39 @@ func RenderJoinRoom(m *Model) string {
 }
 
 func RenderChatView(m *Model) string {
-	m.TextArea.Placeholder = ""
 	var b strings.Builder
-	renderWidth := m.WindowWidth - 2
+	renderWidth := m.WindowWidth - 4 // Margem de segurança
 
 	for _, val := range m.ChatsHistory[m.CurrentRoom] {
 		if val.Content == "" {
 			continue
 		}
 
-		displayTime := val.Timestamp
-		if len(displayTime) >= 16 {
-			displayTime = displayTime[11:16]
-		}
+		displayTime := val.SentAt.Format("15:04")
 
-		//userColor := lipgloss.Color(HashColor(val.User, ColorMap))
-		styledUser := SenderStyle.Render(val.User)
+		var line string
+		var alignedLine string
 
-		if m.Session.Username == val.User {
-			styledUser := SenderStyle.Render("você")
-			line := fmt.Sprintf("%s <%s> [%s]", val.Content, styledUser, TimeStyle.Render(displayTime))
-			b.WriteString(lipgloss.NewStyle().Width(renderWidth).Align(lipgloss.Right).Render(line) + "\n")
+		if val.UserId == m.Session.UserId {
+			// Mensagem do próprio usuário (Direita)
+			senderName := "Você"
+			styledUser := RoomTitleStyle.Render(senderName) // Verde (cor 2)
+
+			line = fmt.Sprintf("%s <%s> [%s]", val.Content, styledUser, TimeStyle.Render(displayTime))
+			alignedLine = lipgloss.NewStyle().Width(renderWidth).Align(lipgloss.Right).Render(line)
 		} else {
-			line := fmt.Sprintf("[%s] <%s> %s", TimeStyle.Render(displayTime), styledUser, val.Content)
-			b.WriteString(lipgloss.NewStyle().Width(renderWidth).Align(lipgloss.Left).Render(line) + "\n")
+			// Mensagem de outros (Esquerda)
+			senderName := val.SenderUsername
+			if senderName == "" {
+				senderName = val.UserId // Fallback se não tiver username
+			}
+			styledUser := SenderStyle.Render(senderName) // Verde escuro (cor 22)
+
+			line = fmt.Sprintf("[%s] <%s> %s", TimeStyle.Render(displayTime), styledUser, val.Content)
+			alignedLine = lipgloss.NewStyle().Width(renderWidth).Align(lipgloss.Left).Render(line)
 		}
+
+		b.WriteString(alignedLine + "\n")
 	}
 	return b.String()
 }

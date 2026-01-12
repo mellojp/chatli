@@ -22,15 +22,21 @@ var TimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
 var RoomTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 
+var RoomIdStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
+
 var UnselectedItemStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("22"))
 
 var SelectedItemStyle = lipgloss.NewStyle().
 	Foreground(lipgloss.Color("10")).
-	Bold(true)
+	Bold(true).
+	Border(lipgloss.NormalBorder(), false, false, false, true). // Adiciona um border para indicar foco
+	BorderForeground(lipgloss.Color("10"))                      // Cor do border
 
 var HelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
-var ErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("10")).Bold(true)
+var ErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true) // Vermelho para erro
+
+var SuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true) // Verde para sucesso
 
 func HashColor(username string, colors map[int]string) string {
 	var hashCode int
