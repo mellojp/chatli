@@ -10,7 +10,12 @@ import (
 	"os"
 )
 
+var API_URL string
+
 func getAPIURL() string {
+	if API_URL != "" {
+		return API_URL
+	}
 	val := os.Getenv("API_URL")
 	if val == "" {
 		return "http://localhost:8080"

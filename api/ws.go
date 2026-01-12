@@ -9,7 +9,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var WS_URL string
+
 func getWSURL() string {
+	if WS_URL != "" {
+		return WS_URL
+	}
 	val := os.Getenv("WS_URL")
 	if val == "" {
 		return "ws://localhost:8080"
