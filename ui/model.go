@@ -1,13 +1,13 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/mellojp/chatli/api"
 	"github.com/mellojp/chatli/data"
 
-	"fmt"
-	"time"
-
 	"github.com/charmbracelet/bubbles/textarea"
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/viewport"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -18,195 +18,355 @@ type uiState int
 
 const (
 	loginView uiState = iota
+	registerView
 	roomListView
+	createRoomView
 	chatView
 	joinRoomView
 )
 
 type SocketError struct {
-	RoomId string
-	Err    error
-}
-
-type ReconnectMsg struct {
-	RoomId string
+	Err error
 }
 
 type Model struct {
 	State        uiState
 	ChatsHistory map[string][]data.Message
-	TextArea     textarea.Model
-	Viewport     viewport.Model
-	Cursor       int
-	CurrentRoom  string
-	Session      data.Session
+
+	// Inputs específicos
+	UsernameInput textinput.Model
+	PasswordInput textinput.Model
+	ChatInput     textarea.Model
+	GenericInput  textarea.Model // Para Room ID ou Room Name
+
+	InputIndex int // 0 para User, 1 para Password
+
+	Viewport    viewport.Model
+	Cursor      int
+	CurrentRoom string
+	Session     data.Session
+
 	WindowHeight int
 	WindowWidth  int
 	ErrorMsg     string
-	SocketsConns map[string]*websocket.Conn
+	SuccessMsg   string
+	WSConn       *websocket.Conn
 }
 
 func NewModel() *Model {
-	ta := textarea.New()
-	ta.Placeholder = ""
-	ta.Focus()
-	ta.Prompt = ""
-	ta.ShowLineNumbers = false
-	ta.SetHeight(1)
+	// Configuração do Input de Username
+	userIn := textinput.New()
+	userIn.Placeholder = "Username"
+	userIn.Focus()
+	userIn.Prompt = ""
 
-	ta.FocusedStyle.Base = lipgloss.NewStyle()
-	ta.BlurredStyle.Base = lipgloss.NewStyle()
-	ta.FocusedStyle.CursorLine = lipgloss.NewStyle()
+	// Configuração do Input de Password
+	passIn := textinput.New()
+	passIn.Placeholder = "Password"
+	passIn.Prompt = ""
+	passIn.EchoMode = textinput.EchoPassword
+	passIn.EchoCharacter = '•'
+
+	// Configuração do Chat Input
+	chatIn := textarea.New()
+	chatIn.Placeholder = "Type a message..."
+	chatIn.Prompt = ""
+	chatIn.SetHeight(1)
+	chatIn.ShowLineNumbers = false
+
+	// Configuração Genérica
+	genIn := textarea.New()
+	genIn.Prompt = ""
+	genIn.SetHeight(1)
+	genIn.ShowLineNumbers = false
 
 	vp := viewport.New(80, 20)
 
 	return &Model{
-		State:        loginView,
-		ChatsHistory: map[string][]data.Message{},
-		TextArea:     ta,
-		Viewport:     vp,
-		Cursor:       0,
-		CurrentRoom:  "",
-		ErrorMsg:     "",
-		SocketsConns: map[string]*websocket.Conn{},
+		State:         loginView,
+		ChatsHistory:  make(map[string][]data.Message),
+		UsernameInput: userIn,
+		PasswordInput: passIn,
+		ChatInput:     chatIn,
+		GenericInput:  genIn,
+		InputIndex:    0,
+		Viewport:      vp,
 	}
 }
 
 func (*Model) Init() tea.Cmd {
-	return textarea.Blink
+	return tea.Batch(textarea.Blink, textinput.Blink)
 }
 
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
-	var cmd, vpCmd tea.Cmd
+	var cmd tea.Cmd
+	var cmds []tea.Cmd
+
 	switch msg := msg.(type) {
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "ctrl+c":
 			return m, tea.Quit
+
+		// Navegação via TAB e SETAS (Troca de Campo ou Navegação na Lista)
+		case "tab", "shift+tab", "up", "down":
+			switch m.State {
+			case loginView, registerView:
+				// Cicla entre 0 e 1
+				m.InputIndex = (m.InputIndex + 1) % 2
+
+				if m.InputIndex == 0 {
+					m.UsernameInput.Focus()
+					m.PasswordInput.Blur()
+				} else {
+					m.UsernameInput.Blur()
+					m.PasswordInput.Focus()
+				}
+				return m, nil
+			case roomListView:
+				if msg.String() == "up" {
+					if m.Cursor > 0 {
+						m.Cursor--
+					}
+				} else {
+					if m.Cursor < len(m.Session.JoinedRooms)-1 {
+						m.Cursor++
+					}
+				}
+				return m, nil
+			}
+
 		case "enter":
 			m.ErrorMsg = ""
+			m.SuccessMsg = ""
 			switch m.State {
 			case loginView:
-				name := m.TextArea.Value()
-				if name == "" {
-					return m, nil
-				}
-				session, err := api.CreateSession(name)
-				if err != nil {
-					m.ErrorMsg = err.Error()
-					return m, nil
-				}
-				m.Session = *session
-				m.State = roomListView
-				m.TextArea.Reset()
-				return m, nil
-
-			case roomListView:
-				if len(m.Session.JoinedRooms) == 0 {
-					return m, nil
-				}
-				m.CurrentRoom = m.Session.JoinedRooms[m.Cursor]
-				m.State = chatView
-				m.TextArea.Reset()
-				api.JoinRoom(m.Session, m.CurrentRoom)
-				v, _ := api.LoadChatMessages(m.Session, m.CurrentRoom, 50)
-				m.ChatsHistory[m.CurrentRoom] = v
-				m.Viewport.SetContent(RenderChatView(m))
-				m.Viewport.GotoBottom()
-
-				conn, ok := m.SocketsConns[m.CurrentRoom]
-				if !ok || conn == nil {
-					wsConn, err := api.ConnectWebSocket(m.Session, m.CurrentRoom)
+				// Só tenta logar se o campo de password estiver focado
+				if m.InputIndex == 1 {
+					session, err := api.Login(m.UsernameInput.Value(), m.PasswordInput.Value())
 					if err != nil {
 						m.ErrorMsg = err.Error()
 						return m, nil
 					}
-					m.SocketsConns[m.CurrentRoom] = wsConn
-					return m, WaitForMessage(wsConn, m.CurrentRoom)
+					m.Session = *session
+
+					// Carrega as salas do usuário do servidor
+					rooms, err := api.GetUserRooms(m.Session)
+					if err == nil {
+						m.Session.JoinedRooms = rooms
+					}
+
+					// Conecta WebSocket Global
+					wsConn, err := api.ConnectWebSocket(m.Session)
+					if err != nil {
+						m.ErrorMsg = "Erro WS: " + err.Error()
+						return m, nil
+					}
+					m.WSConn = wsConn
+
+					m.State = roomListView
+					m.UsernameInput.Reset()
+					m.PasswordInput.Reset()
+					return m, WaitForMessage(m.WSConn)
 				}
+				// Se ENTER for pressionado no campo de username, não faz nada
+				return m, nil
+
+			case registerView:
+				// Só tenta registrar se o campo de password estiver focado
+				if m.InputIndex == 1 {
+					err := api.Register(m.UsernameInput.Value(), m.PasswordInput.Value())
+					if err != nil {
+						m.ErrorMsg = err.Error()
+						return m, nil
+					}
+					m.State = loginView
+					m.SuccessMsg = "Registrado! Faça login."
+					m.InputIndex = 1 // Foca na senha pra agilizar no login
+					m.UsernameInput.Blur()
+					m.PasswordInput.Focus()
+					return m, nil
+				}
+				// Se ENTER for pressionado no campo de username, não faz nada
+				return m, nil
+			case createRoomView:
+				roomName := m.GenericInput.Value()
+				if roomName == "" {
+					return m, nil
+				}
+				newRoom, err := api.CreateRoom(m.Session, roomName)
+				if err != nil {
+					m.ErrorMsg = err.Error()
+					return m, nil
+				}
+				m.Session.JoinedRooms = append(m.Session.JoinedRooms, *newRoom)
+				m.State = roomListView
+				m.GenericInput.Reset()
 				return m, nil
 
 			case joinRoomView:
-				roomId := m.TextArea.Value()
+				roomId := m.GenericInput.Value()
 				err := api.JoinRoom(m.Session, roomId)
 				if err != nil {
 					m.ErrorMsg = err.Error()
 					return m, nil
 				}
-				wsConn, _ := api.ConnectWebSocket(m.Session, roomId)
-				m.SocketsConns[roomId] = wsConn
-				m.Session.JoinedRooms = append(m.Session.JoinedRooms, roomId)
+
+				// Atualiza lista de salas para pegar o nome
+				rooms, err := api.GetUserRooms(m.Session)
+				if err == nil {
+					m.Session.JoinedRooms = rooms
+				}
+
 				m.State = chatView
 				m.CurrentRoom = roomId
-				m.TextArea.Reset()
-				return m, WaitForMessage(wsConn, roomId)
+
+				// Carrega histórico da nova sala
+				v, _ := api.LoadChatMessages(m.Session, m.CurrentRoom)
+				m.ChatsHistory[m.CurrentRoom] = v
+				m.Viewport.SetContent(RenderChatView(m))
+				m.Viewport.GotoBottom()
+
+				m.GenericInput.Reset()
+				m.ChatInput.Focus()
+				return m, nil
 
 			case chatView:
-				content := m.TextArea.Value()
+				content := m.ChatInput.Value()
 				if content == "" {
 					return m, nil
 				}
-				conn := m.SocketsConns[m.CurrentRoom]
+				// Usa conexao global
 				msg := data.Message{
-					Type: "chat", User: m.Session.Username,
-					Timestamp: time.Now().Format("2006-01-02 15:04:05"),
-					Content:   content, RoomId: m.CurrentRoom,
+					Type:    "chat",
+					Content: content,
+					RoomId:  m.CurrentRoom,
+					// Id e SentAt são gerados no servidor
 				}
-				conn.WriteJSON(msg)
-				m.TextArea.Reset()
+				if err := m.WSConn.WriteJSON(msg); err != nil {
+					m.ErrorMsg = "Erro ao enviar: " + err.Error()
+					return m, nil
+				}
+				m.ChatInput.Reset()
+				return m, nil
+			case roomListView:
+				if len(m.Session.JoinedRooms) == 0 {
+					return m, nil
+				}
+				m.CurrentRoom = m.Session.JoinedRooms[m.Cursor].Id
+				m.State = chatView
+
+				v, _ := api.LoadChatMessages(m.Session, m.CurrentRoom)
+				m.ChatsHistory[m.CurrentRoom] = v
+				m.Viewport.SetContent(RenderChatView(m))
+				m.Viewport.GotoBottom()
+				m.ChatInput.Focus()
+
 				return m, nil
 			}
+
 		case "n":
 			if m.State == roomListView {
-				newRoom, _ := api.CreateRoom(m.Session)
-				m.Session.JoinedRooms = append(m.Session.JoinedRooms, newRoom.Id)
+				m.State = createRoomView
+				m.GenericInput.Placeholder = "Room Name"
+				m.GenericInput.Reset()
+				m.GenericInput.Focus()
 				return m, nil
 			}
 		case "e":
 			if m.State == roomListView {
 				m.State = joinRoomView
-				m.TextArea.Reset()
+				m.GenericInput.Placeholder = "Room UUID"
+				m.GenericInput.Reset()
+				m.GenericInput.Focus()
 				m.ErrorMsg = ""
 				return m, nil
 			}
-		case "up":
-			if m.Cursor > 0 && m.State == roomListView {
-				m.Cursor--
-			}
-		case "down":
-			if m.Cursor < len(m.Session.JoinedRooms)-1 && m.State == roomListView {
-				m.Cursor++
-			}
 		case "esc":
 			m.ErrorMsg = ""
+			m.SuccessMsg = ""
 			switch m.State {
 			case roomListView:
 				m.State = loginView
-			case joinRoomView, chatView:
+				m.UsernameInput.Reset()
+				m.PasswordInput.Reset()
+				m.InputIndex = 0
+				m.UsernameInput.Focus()
+				m.PasswordInput.Blur()
+			case loginView:
+				m.State = registerView
+				m.ErrorMsg = ""
+				m.SuccessMsg = ""
+				m.UsernameInput.Reset()
+				m.PasswordInput.Reset()
+				m.InputIndex = 0
+				m.UsernameInput.Focus()
+				m.PasswordInput.Blur()
+				return m, nil
+			case registerView:
+				m.State = loginView
+				m.InputIndex = 0
+				m.UsernameInput.Focus()
+				m.PasswordInput.Blur()
+			case joinRoomView, chatView, createRoomView:
 				m.State = roomListView
 			}
-			m.TextArea.Reset()
+		case "pgup", "pgdown":
+			if m.State == chatView {
+				m.Viewport, cmd = m.Viewport.Update(msg)
+				return m, cmd
+			}
+		case "left", "right":
+			if m.State == chatView {
+				m.Viewport, cmd = m.Viewport.Update(msg)
+				return m, cmd
+			}
 		}
+
 	case tea.WindowSizeMsg:
 		m.WindowHeight = msg.Height
 		m.WindowWidth = msg.Width
-		m.TextArea.SetWidth(msg.Width)
-		m.Viewport.Height = msg.Height - 4
-		m.Viewport.Width = msg.Width
+		m.ChatInput.SetWidth(m.WindowWidth)
+		// Input ocupa largura total menos margem estimada (labels etc)
+		inputWidth := m.WindowWidth - 20
+		if inputWidth < 10 {
+			inputWidth = 10
+		}
+		m.UsernameInput.Width = inputWidth
+		m.PasswordInput.Width = inputWidth
+		m.GenericInput.SetWidth(inputWidth)
+		m.Viewport.Height = m.WindowHeight - 4 - m.ChatInput.Height() - 1 // Ajusta para o chat input
+		m.Viewport.Width = m.WindowWidth
 
 	case data.Message:
 		m.ChatsHistory[msg.RoomId] = append(m.ChatsHistory[msg.RoomId], msg)
-		m.Viewport.SetContent(RenderChatView(m))
-		m.Viewport.GotoBottom()
-		return m, WaitForMessage(m.SocketsConns[msg.RoomId], msg.RoomId)
+		if m.CurrentRoom == msg.RoomId {
+			m.Viewport.SetContent(RenderChatView(m))
+			m.Viewport.GotoBottom()
+		}
+		return m, WaitForMessage(m.WSConn)
 	}
 
-	m.TextArea, cmd = m.TextArea.Update(msg)
-	if key, ok := msg.(tea.KeyMsg); ok && (key.String() == "k" || key.String() == "j") {
-		return m, cmd
+	// Update dos TextAreas
+	switch m.State {
+	case loginView, registerView:
+		m.UsernameInput, cmd = m.UsernameInput.Update(msg)
+		cmds = append(cmds, cmd)
+		m.PasswordInput, cmd = m.PasswordInput.Update(msg)
+		cmds = append(cmds, cmd)
+	case chatView:
+		m.ChatInput, cmd = m.ChatInput.Update(msg)
+		cmds = append(cmds, cmd)
+	case createRoomView, joinRoomView:
+		m.GenericInput, cmd = m.GenericInput.Update(msg)
+		cmds = append(cmds, cmd)
 	}
-	m.Viewport, vpCmd = m.Viewport.Update(msg)
-	return m, tea.Batch(cmd, vpCmd)
+
+	// Update Viewport
+	m.Viewport, cmd = m.Viewport.Update(msg)
+	cmds = append(cmds, cmd)
+
+	return m, tea.Batch(cmds...)
 }
 
 func (m *Model) View() string {
@@ -214,15 +374,39 @@ func (m *Model) View() string {
 	switch m.State {
 	case loginView:
 		s = RenderLogin(m)
+	case registerView:
+		s = RenderRegister(m)
 	case roomListView:
 		s = RenderRoomsList(m)
+	case createRoomView:
+		s = RenderCreateRoom(m)
 	case joinRoomView:
 		s = RenderJoinRoom(m)
 	case chatView:
-		header := RoomTitleStyle.Render(fmt.Sprintf("%s@terminal:~$ /chatli/rooms/%s tail", m.Session.Username, m.CurrentRoom)) + "\n"
+		var roomName string
+		for _, r := range m.Session.JoinedRooms {
+			if r.Id == m.CurrentRoom {
+				roomName = r.Name
+				break
+			}
+		}
+		if roomName == "" {
+			roomName = "Unknown Room"
+		}
+
+		title := RoomTitleStyle.Render("Room: " + roomName)
+		back := HelpStyle.Render("[esc] back")
+		gap := m.WindowWidth - lipgloss.Width(title) - lipgloss.Width(back)
+		if gap < 0 {
+			gap = 0
+		}
+
+		header := title + strings.Repeat(" ", gap) + back + "\n"
+		subheader := RoomIdStyle.Render("ID: "+m.CurrentRoom) + "\n"
+		separator := HelpStyle.Render(strings.Repeat("─", m.WindowWidth)) + "\n"
 		body := m.Viewport.View()
-		prompt := SystemStyle.Render("$ ") + InputStyle.Render(m.TextArea.View())
-		s = header + body + "\n" + prompt
+		prompt := SystemStyle.Render("$ ") + InputStyle.Render(m.ChatInput.View())
+		s = header + subheader + separator + body + "\n" + separator + prompt
 		if m.ErrorMsg != "" {
 			s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 		}
@@ -230,12 +414,12 @@ func (m *Model) View() string {
 	return lipgloss.Place(m.WindowWidth, m.WindowHeight, lipgloss.Left, lipgloss.Top, AppStyle.Render(s))
 }
 
-func WaitForMessage(conn *websocket.Conn, roomId string) tea.Cmd {
+func WaitForMessage(conn *websocket.Conn) tea.Cmd {
 	return func() tea.Msg {
 		msg := data.Message{}
 		err := conn.ReadJSON(&msg)
 		if err != nil {
-			return SocketError{RoomId: roomId, Err: err}
+			return SocketError{Err: err}
 		}
 		return msg
 	}

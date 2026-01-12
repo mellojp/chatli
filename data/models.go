@@ -5,25 +5,26 @@ import (
 )
 
 type Message struct {
-	Id        string `json:"id"`
-	Type      string `json:"type"`
-	User      string `json:"user"`
-	Content   string `json:"message"`
-	Timestamp string `json:"timestamp"`
-	RoomId    string `json:"room_id"`
+	Id             string    `json:"id,omitempty"`
+	Type           string    `json:"type"`
+	UserId         string    `json:"user_id,omitempty"`
+	SenderUsername string    `json:"sender_username"`
+	Content        string    `json:"content"`
+	SentAt         time.Time `json:"created_at,omitempty"`
+	RoomId         string    `json:"room_id"`
 }
 
 type Room struct {
-	Id           string    `json:"room_id"`
-	CreatedAt    time.Time `json:"created_at"`
-	LastActivity time.Time `json:"last_activity"`
-	ActiveUsers  []string  `json:"active_users"`
+	Id        string     `json:"id"`
+	Name      string     `json:"name"`
+	CreatorId string     `json:"creator_id"`
+	CreatedAt time.Time  `json:"created_at"`
+	DeletedAt *time.Time `json:"deleted_at"`
 }
 
 type Session struct {
-	Id           string    `json:"session_id"`
-	Username     string    `json:"username"`
-	JoinedRooms  []string  `json:"joined_rooms"`
-	CreatedAt    time.Time `json:"created_at"`
-	LastActivity time.Time `json:"last_activity"`
+	Token       string `json:"token"`
+	Username    string `json:"username"`
+	UserId      string `json:"user_id"`
+	JoinedRooms []Room `json:"joined_rooms"`
 }
