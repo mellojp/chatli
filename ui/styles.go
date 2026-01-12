@@ -22,6 +22,8 @@ var TimeStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("241"))
 
 var RoomTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("2"))
 
+var HighlightTitleStyle = lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#1eff00"))
+
 var RoomIdStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 
 var UnselectedItemStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("22"))
@@ -37,6 +39,33 @@ var HelpStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("240"))
 var ErrorStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("9")).Bold(true) // Vermelho para erro
 
 var SuccessStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Bold(true) // Verde para sucesso
+
+// Estilos para a Lista de Salas
+var ListHeaderStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("240")).
+	Bold(true)
+
+// Estilo Genérico de Foco (Invertido: Texto Preto em Fundo Verde)
+var FocusedRowStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("232")). // Preto
+	Background(lipgloss.Color("10")).  // Verde brilhante
+	Bold(true)
+
+// Estilo Genérico Normal (Texto Verde)
+var NormalRowStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("10")) // Verde padrão
+
+// Estilos para Formulários (Login/Registro/Inputs)
+var ActiveLabelStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("10")). // Verde brilhante
+	Bold(true)
+
+var InactiveLabelStyle = lipgloss.NewStyle().
+	Foreground(lipgloss.Color("240")) // Cinza escuro
+
+// Mantendo compatibilidade com código anterior (alias)
+var ListSelectedRowStyle = FocusedRowStyle
+var ListNormalRowStyle = NormalRowStyle
 
 func HashColor(username string, colors map[int]string) string {
 	var hashCode int

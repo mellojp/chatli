@@ -1,10 +1,10 @@
 package ui
 
 import (
+	"strings"
+
 	"github.com/mellojp/chatli/api"
 	"github.com/mellojp/chatli/data"
-
-	"fmt"
 
 	"github.com/charmbracelet/bubbles/textarea"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -110,7 +110,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		// Navegação via TAB e SETAS (Troca de Campo ou Navegação na Lista)
 		case "tab", "shift+tab", "up", "down":
-			if m.State == loginView || m.State == registerView {
+			switch m.State {
+			case loginView, registerView:
 				// Cicla entre 0 e 1
 				m.InputIndex = (m.InputIndex + 1) % 2
 
@@ -122,7 +123,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.PasswordInput.Focus()
 				}
 				return m, nil
-			} else if m.State == roomListView {
+			case roomListView:
 				if msg.String() == "up" {
 					if m.Cursor > 0 {
 						m.Cursor--
@@ -219,7 +220,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 				m.State = chatView
 				m.CurrentRoom = roomId
-				
+
 				// Carrega histórico da nova sala
 				v, _ := api.LoadChatMessages(m.Session, m.CurrentRoom)
 				m.ChatsHistory[m.CurrentRoom] = v
@@ -326,9 +327,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.WindowHeight = msg.Height
 		m.WindowWidth = msg.Width
 		m.ChatInput.SetWidth(m.WindowWidth)
-		m.UsernameInput.Width = m.WindowWidth / 2
-		m.PasswordInput.Width = m.WindowWidth / 2
-		m.GenericInput.SetWidth(m.WindowWidth / 2)
+		// Input ocupa largura total menos margem estimada (labels etc)
+		inputWidth := m.WindowWidth - 20
+		if inputWidth < 10 {
+			inputWidth = 10
+		}
+		m.UsernameInput.Width = inputWidth
+		m.PasswordInput.Width = inputWidth
+		m.GenericInput.SetWidth(inputWidth)
 		m.Viewport.Height = m.WindowHeight - 4 - m.ChatInput.Height() - 1 // Ajusta para o chat input
 		m.Viewport.Width = m.WindowWidth
 
@@ -342,15 +348,16 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 
 	// Update dos TextAreas
-	if m.State == loginView || m.State == registerView {
+	switch m.State {
+	case loginView, registerView:
 		m.UsernameInput, cmd = m.UsernameInput.Update(msg)
 		cmds = append(cmds, cmd)
 		m.PasswordInput, cmd = m.PasswordInput.Update(msg)
 		cmds = append(cmds, cmd)
-	} else if m.State == chatView {
+	case chatView:
 		m.ChatInput, cmd = m.ChatInput.Update(msg)
 		cmds = append(cmds, cmd)
-	} else if m.State == createRoomView || m.State == joinRoomView {
+	case createRoomView, joinRoomView:
 		m.GenericInput, cmd = m.GenericInput.Update(msg)
 		cmds = append(cmds, cmd)
 	}
@@ -376,10 +383,30 @@ func (m *Model) View() string {
 	case joinRoomView:
 		s = RenderJoinRoom(m)
 	case chatView:
-		header := RoomTitleStyle.Render(fmt.Sprintf("%s@terminal:~$ /chatli/rooms/%s tail", m.Session.Username, m.CurrentRoom)) + "\n"
+		var roomName string
+		for _, r := range m.Session.JoinedRooms {
+			if r.Id == m.CurrentRoom {
+				roomName = r.Name
+				break
+			}
+		}
+		if roomName == "" {
+			roomName = "Unknown Room"
+		}
+
+		title := RoomTitleStyle.Render("Room: " + roomName)
+		back := HelpStyle.Render("[esc] back")
+		gap := m.WindowWidth - lipgloss.Width(title) - lipgloss.Width(back)
+		if gap < 0 {
+			gap = 0
+		}
+
+		header := title + strings.Repeat(" ", gap) + back + "\n"
+		subheader := RoomIdStyle.Render("ID: "+m.CurrentRoom) + "\n"
+		separator := HelpStyle.Render(strings.Repeat("─", m.WindowWidth)) + "\n"
 		body := m.Viewport.View()
 		prompt := SystemStyle.Render("$ ") + InputStyle.Render(m.ChatInput.View())
-		s = header + body + "\n" + prompt
+		s = header + subheader + separator + body + "\n" + separator + prompt
 		if m.ErrorMsg != "" {
 			s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 		}

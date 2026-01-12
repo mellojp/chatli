@@ -22,107 +22,187 @@ func renderAsciiHeader(m *Model) string {
 }
 
 func RenderLogin(m *Model) string {
-	s := renderAsciiHeader(m)
-	s += SystemStyle.Render("user@terminal:~$ login") + "\n\n"
-
-	usernameField := m.UsernameInput.View()
-	passwordField := m.PasswordInput.View()
-
-	// Adiciona estilo de foco
-	if m.InputIndex == 0 {
-		usernameField = SelectedItemStyle.Render(usernameField)
-	} else {
-		passwordField = SelectedItemStyle.Render(passwordField)
-	}
-
-	s += "Username: " + usernameField + "\n"
-	s += "Password: " + passwordField + "\n\n"
-
-	s += HelpStyle.Render("[tab/arrows] switch fields | [enter] login | [esc] register new account")
+	s := SystemStyle.Render("user@terminal:~$ ") + HighlightTitleStyle.Render("login") + "\n\n"
 
 	if m.SuccessMsg != "" {
-		s += "\n\n" + SuccessStyle.Render(m.SuccessMsg)
+		s += SuccessStyle.Render(m.SuccessMsg) + "\n\n"
 	}
+
+	var userPrefix, passPrefix, userLabel, passLabel string
+
+	// Configuração Visual do Username
+	if m.InputIndex == 0 {
+		userPrefix = "> "
+		userLabel = ActiveLabelStyle.Render("Username:")
+	} else {
+		userPrefix = "  "
+		userLabel = InactiveLabelStyle.Render("Username:")
+	}
+
+	// Configuração Visual do Password
+	if m.InputIndex == 1 {
+		passPrefix = "> "
+		passLabel = ActiveLabelStyle.Render("Password:")
+	} else {
+		passPrefix = "  "
+		passLabel = InactiveLabelStyle.Render("Password:")
+	}
+
+	// Montagem das linhas com alinhamento manual
+	// %-10s não é usado no label para não bagunçar com os códigos de cor ANSI do Lipgloss
+	// Então alinhamos visualmente com espaços fixos se necessário, ou deixamos fluido.
+	// Vamos usar um layout simples: PREFIX LABEL INPUT
+	
+	s += fmt.Sprintf("%s%s %s\n", userPrefix, userLabel, m.UsernameInput.View())
+	s += fmt.Sprintf("%s%s %s\n\n", passPrefix, passLabel, m.PasswordInput.View())
+
+	s += lipgloss.PlaceHorizontal(m.WindowWidth, lipgloss.Center, HelpStyle.Render("[tab/arrows] switch fields | [enter] login | [esc] register new account"))
+
 	if m.ErrorMsg != "" {
 		s += "\n\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 	}
-	return s
+
+	return renderAsciiHeader(m) + s
 }
 
 func RenderRegister(m *Model) string {
-	s := renderAsciiHeader(m)
-	s += SystemStyle.Render("user@terminal:~$ register") + "\n\n"
+	s := SystemStyle.Render("user@terminal:~$ ") + HighlightTitleStyle.Render("register") + "\n\n"
 
-	usernameField := m.UsernameInput.View()
-	passwordField := m.PasswordInput.View()
+	var userPrefix, passPrefix, userLabel, passLabel string
 
-	// Adiciona estilo de foco
 	if m.InputIndex == 0 {
-		usernameField = SelectedItemStyle.Render(usernameField)
+		userPrefix = "> "
+		userLabel = ActiveLabelStyle.Render("Username:")
 	} else {
-		passwordField = SelectedItemStyle.Render(passwordField)
+		userPrefix = "  "
+		userLabel = InactiveLabelStyle.Render("Username:")
 	}
 
-	s += "Username: " + usernameField + "\n"
-	s += "Password: " + passwordField + "\n\n"
+	if m.InputIndex == 1 {
+		passPrefix = "> "
+		passLabel = ActiveLabelStyle.Render("Password:")
+	} else {
+		passPrefix = "  "
+		passLabel = InactiveLabelStyle.Render("Password:")
+	}
 
-	s += HelpStyle.Render("[tab/arrows] switch fields | [enter] create account | [esc] back to login")
+	s += fmt.Sprintf("%s%s %s\n", userPrefix, userLabel, m.UsernameInput.View())
+	s += fmt.Sprintf("%s%s %s\n\n", passPrefix, passLabel, m.PasswordInput.View())
+
+	s += lipgloss.PlaceHorizontal(m.WindowWidth, lipgloss.Center, HelpStyle.Render("[tab/arrows] switch fields | [enter] create account | [esc] back to login"))
 
 	if m.ErrorMsg != "" {
 		s += "\n\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 	}
-	return s
+	
+	return renderAsciiHeader(m) + s
 }
 
 func RenderRoomsList(m *Model) string {
-	s := fmt.Sprintf("%s@terminal:~$ /chatli/rooms ls", m.Session.Username)
-	s = SystemStyle.Render(s) + "\n"
+	s := SystemStyle.Render(fmt.Sprintf("%s@terminal:~/chatli/rooms$ ls -lh", m.Session.Username)) + "\n\n"
+
+	// Definição de Larguras
+	width := m.WindowWidth
+	if width < 0 {
+		width = 0
+	}
+	
+	// Layout: [Prefix 2] [Name Dynamic] [Gap 1] [Date 15] [Gap 1] [ID 36]
+	// Total Fixed = 2 + 1 + 15 + 1 + 36 = 55 chars
+	// Name Width = WindowWidth - 55
+	
+	fixedWidth := 55
+	nameWidth := width - fixedWidth
+	if nameWidth < 10 {
+		nameWidth = 10
+	}
+
+	// Cabeçalho
+	// Usamos estilos para forçar largura
+	nameHeader := lipgloss.NewStyle().Width(nameWidth).Render("NAME")
+	dateHeader := lipgloss.NewStyle().Width(15).Render("CREATED")
+	idHeader := lipgloss.NewStyle().Width(36).Render("ID")
+	
+	headerStr := fmt.Sprintf("  %s %s %s", nameHeader, dateHeader, idHeader)
+	s += ListHeaderStyle.Width(width).Render(headerStr) + "\n"
 
 	if len(m.Session.JoinedRooms) == 0 {
-		s += HelpStyle.Render("(Nenhuma sala recente)") + "\n"
+		s += HelpStyle.Render("\n  (empty directory - use 'n' to create a room)") + "\n"
 	}
 
 	for i, room := range m.Session.JoinedRooms {
-		// Formatação: "Nome da Sala" (ID)
-		line := fmt.Sprintf("%s %s", room.Name, RoomIdStyle.Render("("+room.Id+")"))
+		dateStr := room.CreatedAt.Format("02/01 15:04")
+		
+		// Trunca nome se necessário (embora lipgloss oculte, é bom cortar)
+		name := room.Name
+		if len(name) > nameWidth {
+			name = name[:nameWidth-1] + "…"
+		}
+
+		// Renderiza colunas
+		colName := lipgloss.NewStyle().Width(nameWidth).Render(name)
+		colDate := lipgloss.NewStyle().Width(15).Render(dateStr)
+		colId := lipgloss.NewStyle().Width(36).Render(room.Id)
+
+		lineContent := fmt.Sprintf("%s %s %s", colName, colDate, colId)
+		
+		var renderedLine string
 
 		if i == m.Cursor {
-			s += SelectedItemStyle.Render("> "+line) + "\n"
+			// Item selecionado
+			renderedLine = ListSelectedRowStyle.Copy().Width(width).Render("> " + lineContent)
 		} else {
-			s += UnselectedItemStyle.Render("  "+line) + "\n"
+			// Item normal
+			renderedLine = ListNormalRowStyle.Copy().Width(width).Render("  " + lineContent)
 		}
+		s += renderedLine + "\n"
 	}
-	s += "\n" + HelpStyle.Render("[up/down] nav | [n] new room | [e] enter room | [enter] select | [esc] logout")
+
+	// Footer de ajuda (Centralizado)
+	helpText := "[up/down] nav | [n] new room | [e] enter room id | [enter] select | [esc] logout"
+	s += "\n" + lipgloss.PlaceHorizontal(width, lipgloss.Center, HelpStyle.Render(helpText))
+	
 	if m.ErrorMsg != "" {
-		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
+		s += "\n\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 	}
-	return s
+	
+	return renderAsciiHeader(m) + s
 }
 
 func RenderCreateRoom(m *Model) string {
-	s := fmt.Sprintf("%s@terminal:~$ create-room", m.Session.Username)
-	s = SystemStyle.Render(s) + "\n"
-	s += SystemStyle.Render("Room Name: ") + InputStyle.Render(m.GenericInput.View())
+	s := SystemStyle.Render(fmt.Sprintf("%s@terminal:~/chatli/rooms$ mkdir", m.Session.Username)) + "\n\n"
+	
+	// Input único sempre focado
+	prefix := "> "
+	label := ActiveLabelStyle.Render("Room Name:")
+	
+	s += fmt.Sprintf("%s%s %s", prefix, label, m.GenericInput.View())
 
-	s += "\n\n" + HelpStyle.Render("[enter] create | [esc] cancel")
+	s += "\n\n" + lipgloss.PlaceHorizontal(m.WindowWidth, lipgloss.Center, HelpStyle.Render("[enter] create | [esc] cancel"))
 
 	if m.ErrorMsg != "" {
-		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
+		s += "\n\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 	}
-	return s
+	
+	return renderAsciiHeader(m) + s
 }
 
 func RenderJoinRoom(m *Model) string {
-	s := fmt.Sprintf("%s@terminal:~$ join-room --id", m.Session.Username)
-	s = SystemStyle.Render(s) + "\n"
-	s += SystemStyle.Render("Room ID: ") + InputStyle.Render(m.GenericInput.View())
+	s := SystemStyle.Render(fmt.Sprintf("%s@terminal:~/chatli/rooms$ join", m.Session.Username)) + "\n\n"
+	
+	// Input único sempre focado
+	prefix := "> "
+	label := ActiveLabelStyle.Render("Room ID:")
+	
+	s += fmt.Sprintf("%s%s %s", prefix, label, m.GenericInput.View())
 
-	s += "\n\n" + HelpStyle.Render("[enter] join | [esc] cancel")
+	s += "\n\n" + lipgloss.PlaceHorizontal(m.WindowWidth, lipgloss.Center, HelpStyle.Render("[enter] join | [esc] cancel"))
 
 	if m.ErrorMsg != "" {
-		s += "\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
+		s += "\n\n" + ErrorStyle.Render("error: "+m.ErrorMsg)
 	}
-	return s
+
+	return renderAsciiHeader(m) + s
 }
 
 func RenderChatView(m *Model) string {
